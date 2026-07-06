@@ -12,6 +12,7 @@ const REVIEW_YEARS = [2029, 2034, 2039, 2044];
 
 const EXPERT_FORECAST = [
   { period: "2025年12月末", vacancy: 59029, residents: 67871 },
+  { period: "2026年3月末",  vacancy: 52155, residents: 74745, actual: true },
   { period: "2026年6月末",  vacancy: 46074, residents: 80826 },
   { period: "2026年12月末", vacancy: 33119, residents: 93781 },
   { period: "2027年6月末",  vacancy: 20164, residents: 106736 },
@@ -26,7 +27,7 @@ const SCENARIOS = {
 };
 
 const DEFAULTS = {
-  currentResidents:      67871,
+  currentResidents:      74745,
   traineeKaigoResidents: 18400,
   traineeConvRate:       70,
   directEntryBase:       18000,
@@ -209,7 +210,7 @@ export default function App() {
           <span style={{ fontSize:14 }}>🚨</span> 専門家推計（Global HR Strategy 2026年上半期資料）
         </div>
         <div style={{ fontSize:11, color:"#94a3b8", lineHeight:1.9, marginBottom:12 }}>
-          現行ペース（半年+12,955人）が続いた場合、介護分野は
+          現行ペース（年+26,332人・令和8年3月末時点 出入国在留管理庁速報値）が続いた場合、介護分野は
           <span style={{ color:"#f87171", fontWeight:700 }}>　2028年3月に受入停止</span>
           となる見込み。外食業は2026年5月に実際に停止済み。
         </div>
@@ -224,17 +225,17 @@ export default function App() {
             </thead>
             <tbody>
               {EXPERT_FORECAST.map((row, i) => (
-                <tr key={i} style={{ background: row.danger ? "rgba(239,68,68,0.12)" : "transparent" }}>
-                  <td style={{ padding:"7px 8px", color: row.danger ? "#f87171" : "#94a3b8", fontWeight: row.danger ? 700 : 400, whiteSpace:"nowrap" }}>
-                    {row.period}{row.danger ? " 🚨" : ""}
+                <tr key={i} style={{ background: row.danger ? "rgba(239,68,68,0.12)" : row.actual ? "rgba(96,165,250,0.08)" : "transparent" }}>
+                  <td style={{ padding:"7px 8px", color: row.danger ? "#f87171" : row.actual ? "#7dd3fc" : "#94a3b8", fontWeight: (row.danger || row.actual) ? 700 : 400, whiteSpace:"nowrap" }}>
+                    {row.period}{row.danger ? " 🚨" : row.actual ? " ●実績" : ""}
                   </td>
                   <td style={{ padding:"7px 8px", textAlign:"right", color: row.danger ? "#f87171" : row.vacancy < 20000 ? "#fbbf24" : "#4ade80", fontWeight: row.danger ? 700 : 600, fontVariantNumeric:"tabular-nums" }}>
                     {row.danger ? "停止" : fmt(row.vacancy)}
                   </td>
                   <td style={{ padding:"7px 8px", textAlign:"right", color:"#475569", fontVariantNumeric:"tabular-nums" }}>{fmt(row.residents)}</td>
                   <td style={{ padding:"7px 8px", textAlign:"right" }}>
-                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background: row.danger ? "rgba(239,68,68,0.2)" : i <= 1 ? "rgba(74,222,128,0.15)" : "rgba(251,191,36,0.15)", color: row.danger ? "#f87171" : i <= 1 ? "#4ade80" : "#fbbf24", fontWeight:600, whiteSpace:"nowrap" }}>
-                      {row.danger ? "停止見込" : i <= 1 ? "チャンス" : "注意"}
+                    <span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background: row.danger ? "rgba(239,68,68,0.2)" : row.actual ? "rgba(96,165,250,0.2)" : i <= 1 ? "rgba(74,222,128,0.15)" : "rgba(251,191,36,0.15)", color: row.danger ? "#f87171" : row.actual ? "#7dd3fc" : i <= 1 ? "#4ade80" : "#fbbf24", fontWeight:600, whiteSpace:"nowrap" }}>
+                      {row.danger ? "停止見込" : row.actual ? "確定値" : i <= 1 ? "チャンス" : "注意"}
                     </span>
                   </td>
                 </tr>
@@ -243,7 +244,7 @@ export default function App() {
           </table>
         </div>
         <div style={{ fontSize:9, color:"#334155", marginTop:8, lineHeight:1.6 }}>
-          ※直近半年の増加ペースが継続した場合の機械的推計。離脱・帰国や上限見直しは考慮していない
+          ※直近1年間の増加ペースが継続した場合の機械的推計。離脱・帰国や上限見直しは考慮していない。●実績は出入国在留管理庁 令和8年3月末速報値
         </div>
       </div>
 
@@ -251,7 +252,7 @@ export default function App() {
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr", gap:8, margin:"0 16px 14px" }}>
         {[
           { label:"介護分野上限", value:fmtK(CONFIRMED_CAP), sub:"確定値", color:"#fbbf24" },
-          { label:"現在の在留者", value:fmtK(p.currentResidents), sub:"R7.12末", color:"#60a5fa" },
+          { label:"現在の在留者", value:fmtK(p.currentResidents), sub:"R8.3末(速報)", color:"#60a5fa" },
           { label:"現在の空き枠", value:fmtK(currentVacancy), sub:`充填率 ${currentFill}%`, color:"#4ade80" },
         ].map((item,i) => (
           <div key={i} style={{ background:"rgba(255,255,255,0.03)", border:"1px solid #1e3a5f", borderRadius:10, padding:"12px 8px", textAlign:"center" }}>
@@ -507,7 +508,7 @@ export default function App() {
             <div style={{ fontSize:11, color:"#f87171", fontWeight:700, marginBottom:8 }}>🚨 営業タイムリミット</div>
             <div style={{ fontSize:12, color:"#94a3b8", lineHeight:2 }}>
               専門家推計では現行ペースで <span style={{ color:"#f87171", fontWeight:700 }}>2028年3月に受入停止</span>。
-              今から約<span style={{ color:"#fbbf24", fontWeight:700 }}>1年9ヶ月</span>。
+              今から約<span style={{ color:"#fbbf24", fontWeight:700 }}>1年8ヶ月</span>。
               この期間に空き枠を持つ介護事業所への営業を集中させることが重要。
             </div>
           </div>
@@ -590,8 +591,9 @@ export default function App() {
       <div style={{ margin:"12px 16px 0", background:"rgba(255,255,255,0.02)", border:"1px solid #1e3a5f", borderRadius:10, padding:"12px 16px" }}>
         <div style={{ fontSize:9, color:"#334155", lineHeight:2 }}>
           <div style={{ color:"#475569", fontWeight:600, marginBottom:4 }}>⚠ データ出典・注意事項</div>
-          <div>・在留者数67,871人：出入国在留管理庁 R7.12末確定値</div>
-          <div>・上限126,900人：介護分野別運用方針（全体785,700人とは別）</div>
+          <div>・在留者数74,745人：出入国在留管理庁「特定技能１号の受入れ見込数及び在留者数について」令和8年3月末時点・速報値</div>
+          <div>・受入れ見込数の充足率：58.9%（同資料）</div>
+          <div>・上限126,900人：介護分野別運用方針（全体805,700人とは別、令和8年1月閣議決定）</div>
           <div>・専門家推計：Global HR Strategy 2026年上半期資料</div>
           <div>・2029年以降の上限・シナリオラインは仮定値（点線）</div>
           <div style={{ color:"#f87171", marginTop:4 }}>・本ツールは社内営業判断用。外部開示・行政提出には使用不可</div>

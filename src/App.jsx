@@ -13,7 +13,10 @@ const REVIEW_YEARS = [2029, 2034, 2039];
 function buildPeriods(startYear, endYear) {
   const periods = [];
   for (let year = startYear; year <= endYear; year++) {
-    periods.push({ year, half: 1, label: `${year}年6月末`, key: `${year}-1` });
+    // 開始年の6月末は信頼できる実測値が無いため対象外（12月末データから開始）
+    if (year !== startYear) {
+      periods.push({ year, half: 1, label: `${year}年6月末`, key: `${year}-1` });
+    }
     periods.push({ year, half: 2, label: `${year}年12月末`, key: `${year}-2` });
   }
   return periods;
@@ -29,6 +32,19 @@ const EXPERT_FORECAST = [
   { period: "2027年12月末", vacancy: 7209,  residents: 119691 },
   { period: "2028年3月",    vacancy: 0,     residents: 126900, danger: true },
 ];
+
+// 2025年12月末〜2028年12月末は専門家推計・確定値（出入国在留管理庁速報値等）をそのまま採用する。
+// この期間は流入出の仮定モデルではなく、実測・外挿ベースの数値を表示する（3シナリオ共通）。
+// 2029年以降のみ、下の流入出モデルによる試算を行う。
+const HISTORICAL_RESIDENTS = {
+  "2025-2": 67871,
+  "2026-1": 80826,
+  "2026-2": 93781,
+  "2027-1": 106736,
+  "2027-2": 119691,
+  "2028-1": 126900,
+  "2028-2": 126900,
+};
 
 const SCENARIOS = {
   hippaku:  { label: "逼迫", sublabel: "上限に早く達する", color: "#f87171", inMult: 1.25, outMult: 0.8,  icon: "⚠" },
@@ -69,36 +85,48 @@ function simulate(p, scenarioKey) {
   let directEntryAnnual = p.directEntryBase;
 
   PERIODS.forEach(({ year, half, label, key }) => {
-    const cap       = getCap(year, p);
-    const confirmed = year <= CONFIRMED_CAP_UNTIL;
+    const cap          = getCap(year, p);
+    const confirmed    = year <= CONFIRMED_CAP_UNTIL;
+    const histValue     = HISTORICAL_RESIDENTS[key];
+    const isHistorical  = histValue != null && year <= CONFIRMED_CAP_UNTIL;
 
-    const traineeAnnualGrad = Math.round(p.traineeKaigoResidents / 3);
-    const traineeConvAnnual = Math.round(traineeAnnualGrad * (p.traineeConvRate / 100) * sc.inMult);
-    const traineeConv       = Math.round(traineeConvAnnual / 2);
+    let traineeConv = null, direct = null, ikuseiroConv = null, totalInflow = null;
+    let repatriate  = null, kaishou = null, totalOutflow = null;
+    let newResidents;
 
-    const direct = Math.round((directEntryAnnual * sc.inMult) / 2);
+    if (isHistorical) {
+      // 実測・専門家推計値をそのまま採用（シナリオ間で差は出さない）
+      newResidents = histValue;
+    } else {
+      const traineeAnnualGrad = Math.round(p.traineeKaigoResidents / 3);
+      const traineeConvAnnual = Math.round(traineeAnnualGrad * (p.traineeConvRate / 100) * sc.inMult);
+      traineeConv = Math.round(traineeConvAnnual / 2);
 
-    let ikuseiroConv = 0;
-    if (year >= p.ikuseiroTransferStart) {
-      const yt = year - p.ikuseiroTransferStart;
-      const ikuseiroAnnual = Math.round(p.ikuseiroInitial * Math.pow(1 + p.ikuseiroGrowth / 100, yt) * sc.inMult);
-      ikuseiroConv = Math.round(ikuseiroAnnual / 2);
+      direct = Math.round((directEntryAnnual * sc.inMult) / 2);
+
+      ikuseiroConv = 0;
+      if (year >= p.ikuseiroTransferStart) {
+        const yt = year - p.ikuseiroTransferStart;
+        const ikuseiroAnnual = Math.round(p.ikuseiroInitial * Math.pow(1 + p.ikuseiroGrowth / 100, yt) * sc.inMult);
+        ikuseiroConv = Math.round(ikuseiroAnnual / 2);
+      }
+
+      totalInflow  = traineeConv + direct + ikuseiroConv;
+      repatriate   = Math.round(residents * (p.repatriateRate / 100 / 2) * sc.outMult);
+      kaishou      = Math.round(residents * (p.kaishouRate    / 100 / 2) * sc.outMult);
+      totalOutflow = repatriate + kaishou;
+
+      newResidents = Math.min(Math.max(0, residents + totalInflow - totalOutflow), cap);
     }
 
-    const totalInflow  = traineeConv + direct + ikuseiroConv;
-    const repatriate   = Math.round(residents * (p.repatriateRate / 100 / 2) * sc.outMult);
-    const kaishou      = Math.round(residents * (p.kaishouRate    / 100 / 2) * sc.outMult);
-    const totalOutflow = repatriate + kaishou;
-
-    const newResidents = Math.min(Math.max(0, residents + totalInflow - totalOutflow), cap);
-    const vacancy       = Math.max(0, cap - newResidents);
-    const fillRate       = Math.round((newResidents / cap) * 100);
-    const chance          = fillRate >= 95 ? "danger" : fillRate >= 80 ? "caution" : fillRate >= 60 ? "normal" : "good";
+    const vacancy  = Math.max(0, cap - newResidents);
+    const fillRate = Math.round((newResidents / cap) * 100);
+    const chance   = fillRate >= 95 ? "danger" : fillRate >= 80 ? "caution" : fillRate >= 60 ? "normal" : "good";
 
     rows.push({
       year, half, label, key,
-      cap, confirmed, residents: Math.round(residents),
-      vacancy, fillRate, chance,
+      cap, confirmed, residents: Math.round(newResidents),
+      vacancy, fillRate, chance, historical: isHistorical,
       traineeConv, direct, ikuseiroConv, totalInflow,
       repatriate, kaishou, totalOutflow,
     });
@@ -188,7 +216,8 @@ export default function App() {
 
   const currentVacancy  = Math.max(0, CONFIRMED_CAP - p.currentResidents);
   const currentFill     = Math.round((p.currentResidents / CONFIRMED_CAP) * 100);
-  const currentChance   = CHANCE_META[all.standard[0]?.chance ?? "good"];
+  const currentChanceKey = currentFill >= 95 ? "danger" : currentFill >= 80 ? "caution" : currentFill >= 60 ? "normal" : "good";
+  const currentChance   = CHANCE_META[currentChanceKey];
   const chanceHalfYears = all.standard.filter(r => r.fillRate < 80).length;
   const chanceYearsDisplay = chanceHalfYears % 2 === 0 ? String(chanceHalfYears / 2) : (chanceHalfYears / 2).toFixed(1);
   const dangerRow       = all.standard.find(r => r.fillRate >= 90);
@@ -226,7 +255,7 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div style={{ fontSize:10, color:"#475569", marginTop:6, marginLeft:46 }}>2025–2040（半年ごと）　社内営業判断用</div>
+        <div style={{ fontSize:10, color:"#475569", marginTop:6, marginLeft:46 }}>2025年12月–2040年（半年ごと）　社内営業判断用</div>
       </div>
 
       {/* 警告バナー */}
@@ -366,7 +395,7 @@ export default function App() {
               <span style={{ color:"rgba(251,191,36,0.5)", fontWeight:700 }}>╌ 上限（点線）</span>
               <span style={{ color:"#475569" }}>　2029年以降（仮定）</span>
             </div>
-            <div style={{ fontSize:9, color:"#334155", marginTop:4 }}>グラフ・下表は半年（6月末／12月末）ごとの試算です</div>
+            <div style={{ fontSize:9, color:"#334155", marginTop:4 }}>2025年12月〜2028年は専門家推計・確定値、2029年以降のみ流入出モデルによる試算です</div>
           </div>
 
           <ResponsiveContainer width="100%" height={260}>
@@ -456,7 +485,7 @@ export default function App() {
           </div>
 
           <div style={{ fontSize:10, color:"#475569", marginBottom:8 }}>
-            シミュレーション結果（標準シナリオ・半年ごと）　充填率:
+            シミュレーション結果（半年ごと・2025-2028は専門家推計、2029以降は試算）　充填率:
             <span style={{ color:"#4ade80" }}> ◎60%未満</span>
             <span style={{ color:"#60a5fa" }}> ○60〜80%</span>
             <span style={{ color:"#fbbf24" }}> △80〜95%</span>
@@ -477,14 +506,15 @@ export default function App() {
                   const y = all.yoyu[i];
                   const isReview  = REVIEW_YEARS.includes(row.year);
                   const isDanger2028 = row.year === 2028;
+                  const isHistorical = row.historical;
                   const cm = CHANCE_META[row.chance];
                   return (
                     <tr key={row.key} style={{
-                      background: isDanger2028 ? "rgba(239,68,68,0.08)" : isReview ? "rgba(251,191,36,0.04)" : "transparent",
-                      borderLeft: isDanger2028 ? "2px solid #f87171" : isReview ? "2px solid #fbbf24" : "2px solid transparent"
+                      background: isDanger2028 ? "rgba(239,68,68,0.08)" : isReview ? "rgba(251,191,36,0.04)" : isHistorical ? "rgba(96,165,250,0.04)" : "transparent",
+                      borderLeft: isDanger2028 ? "2px solid #f87171" : isReview ? "2px solid #fbbf24" : isHistorical ? "2px solid #60a5fa" : "2px solid transparent"
                     }}>
-                      <td style={{ padding:"7px 5px", color: isDanger2028 ? "#f87171" : isReview ? "#fbbf24" : "#64748b", fontWeight: (isDanger2028||isReview) ? 700 : 400, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap" }}>
-                        {row.label}{isDanger2028 ? " 🚨" : isReview ? " ★" : ""}
+                      <td style={{ padding:"7px 5px", color: isDanger2028 ? "#f87171" : isReview ? "#fbbf24" : isHistorical ? "#7dd3fc" : "#64748b", fontWeight: (isDanger2028||isReview) ? 700 : 400, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap" }}>
+                        {row.label}{isDanger2028 ? " 🚨" : isReview ? " ★" : isHistorical ? " 📊" : ""}
                       </td>
                       <td style={{ padding:"7px 5px", textAlign:"right", color: row.year <= CONFIRMED_CAP_UNTIL ? "#fbbf24" : "rgba(251,191,36,0.4)", fontSize:9, fontVariantNumeric:"tabular-nums" }}>
                         {fmtK(row.cap)}{row.year > CONFIRMED_CAP_UNTIL ? "仮" : ""}
@@ -497,9 +527,17 @@ export default function App() {
                           {row.fillRate}%
                         </span>
                       </td>
-                      <td style={{ padding:"7px 5px", textAlign:"center", fontSize:9, color:CHANCE_META[h.chance].color }}>{CHANCE_META[h.chance].label}</td>
-                      <td style={{ padding:"7px 5px", textAlign:"center", fontSize:9, color:cm.color }}>{cm.label}</td>
-                      <td style={{ padding:"7px 5px", textAlign:"center", fontSize:9, color:CHANCE_META[y.chance].color }}>{CHANCE_META[y.chance].label}</td>
+                      {isHistorical ? (
+                        <td colSpan={3} style={{ padding:"7px 5px", textAlign:"center", fontSize:9, color:"#7dd3fc" }}>
+                          専門家推計（3シナリオ共通）
+                        </td>
+                      ) : (
+                        <>
+                          <td style={{ padding:"7px 5px", textAlign:"center", fontSize:9, color:CHANCE_META[h.chance].color }}>{CHANCE_META[h.chance].label}</td>
+                          <td style={{ padding:"7px 5px", textAlign:"center", fontSize:9, color:cm.color }}>{cm.label}</td>
+                          <td style={{ padding:"7px 5px", textAlign:"center", fontSize:9, color:CHANCE_META[y.chance].color }}>{CHANCE_META[y.chance].label}</td>
+                        </>
+                      )}
                     </tr>
                   );
                 })}
@@ -581,7 +619,7 @@ export default function App() {
         {openSection === "flow" && (
           <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid #1e3a5f", borderTop:"none", borderRadius:"0 0 9px 9px", padding:"16px" }}>
             <div style={{ fontSize:10, color:"#334155", marginBottom:14, lineHeight:1.7 }}>
-              在留者数・上限は実績値固定。流入・流出の仮定値を調整できます。（年間ベースの数値を半年ごとに按分して計算します）
+              2025年12月末〜2028年12月末は専門家推計・確定値をそのまま使用。ここで調整する仮定値は2029年以降の試算にのみ反映されます。
             </div>
             <SliderRow label="技能実習介護 在留者総数" value={p.traineeKaigoResidents}
               min={5000} max={40000} step={100} unit="人"
@@ -624,7 +662,7 @@ export default function App() {
           <div>・受入れ見込数の充足率：58.9%（同資料）</div>
           <div>・上限126,900人：介護分野別運用方針（全体805,700人とは別、令和8年1月閣議決定）</div>
           <div>・専門家推計：Global HR Strategy 2026年上半期資料</div>
-          <div>・シミュレーションは2025〜2040年を半年（6月末／12月末）単位で試算。年間ベースの仮定値は単純に2分割</div>
+          <div>・2025年12月末〜2028年12月末は上記専門家推計・確定値をそのまま採用（3シナリオ共通）。2029年以降のみ、下記の流入出仮定に基づく試算値（半年ベースは年間仮定値を単純に2分割）</div>
           <div>・2029年以降の上限・シナリオラインは仮定値（点線）</div>
           <div style={{ color:"#f87171", marginTop:4 }}>・本ツールは社内営業判断用。外部開示・行政提出には使用不可</div>
         </div>

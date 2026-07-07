@@ -5,10 +5,20 @@ import {
 } from "recharts";
 
 const START_YEAR = 2025;
-const END_YEAR   = 2044;
+const END_YEAR   = 2040;
 const CONFIRMED_CAP_UNTIL = 2028;
 const CONFIRMED_CAP = 126900;
-const REVIEW_YEARS = [2029, 2034, 2039, 2044];
+const REVIEW_YEARS = [2029, 2034, 2039];
+
+function buildPeriods(startYear, endYear) {
+  const periods = [];
+  for (let year = startYear; year <= endYear; year++) {
+    periods.push({ year, half: 1, label: `${year}年6月末`, key: `${year}-1` });
+    periods.push({ year, half: 2, label: `${year}年12月末`, key: `${year}-2` });
+  }
+  return periods;
+}
+const PERIODS = buildPeriods(START_YEAR, END_YEAR);
 
 const EXPERT_FORECAST = [
   { period: "2025年12月末", vacancy: 59029, residents: 67871 },
@@ -40,7 +50,6 @@ const DEFAULTS = {
   cap2029: 126900,
   cap2034: 126900,
   cap2039: 126900,
-  cap2044: 126900,
   aCompanies: 52,
   aWorkers:   200,
   monthlyFee: 30000,
@@ -50,46 +59,56 @@ function getCap(year, p) {
   if (year <= CONFIRMED_CAP_UNTIL) return CONFIRMED_CAP;
   if (year <= 2033) return p.cap2029;
   if (year <= 2038) return p.cap2034;
-  if (year <= 2043) return p.cap2039;
-  return p.cap2044;
+  return p.cap2039;
 }
 
 function simulate(p, scenarioKey) {
   const sc = SCENARIOS[scenarioKey];
   const rows = [];
-  let residents   = p.currentResidents;
-  let directEntry = p.directEntryBase;
+  let residents         = p.currentResidents;
+  let directEntryAnnual = p.directEntryBase;
 
-  for (let year = START_YEAR; year <= END_YEAR; year++) {
+  PERIODS.forEach(({ year, half, label, key }) => {
     const cap       = getCap(year, p);
     const confirmed = year <= CONFIRMED_CAP_UNTIL;
+
     const traineeAnnualGrad = Math.round(p.traineeKaigoResidents / 3);
-    const traineeConv = Math.round(traineeAnnualGrad * (p.traineeConvRate / 100) * sc.inMult);
-    const direct      = Math.round(directEntry * sc.inMult);
-    let   ikuseiroConv = 0;
+    const traineeConvAnnual = Math.round(traineeAnnualGrad * (p.traineeConvRate / 100) * sc.inMult);
+    const traineeConv       = Math.round(traineeConvAnnual / 2);
+
+    const direct = Math.round((directEntryAnnual * sc.inMult) / 2);
+
+    let ikuseiroConv = 0;
     if (year >= p.ikuseiroTransferStart) {
       const yt = year - p.ikuseiroTransferStart;
-      ikuseiroConv = Math.round(p.ikuseiroInitial * Math.pow(1 + p.ikuseiroGrowth / 100, yt) * sc.inMult);
+      const ikuseiroAnnual = Math.round(p.ikuseiroInitial * Math.pow(1 + p.ikuseiroGrowth / 100, yt) * sc.inMult);
+      ikuseiroConv = Math.round(ikuseiroAnnual / 2);
     }
+
     const totalInflow  = traineeConv + direct + ikuseiroConv;
-    const repatriate   = Math.round(residents * (p.repatriateRate  / 100) * sc.outMult);
-    const kaishou      = Math.round(residents * (p.kaishouRate     / 100) * sc.outMult);
+    const repatriate   = Math.round(residents * (p.repatriateRate / 100 / 2) * sc.outMult);
+    const kaishou      = Math.round(residents * (p.kaishouRate    / 100 / 2) * sc.outMult);
     const totalOutflow = repatriate + kaishou;
+
     const newResidents = Math.min(Math.max(0, residents + totalInflow - totalOutflow), cap);
-    const vacancy      = Math.max(0, cap - newResidents);
-    const fillRate     = Math.round((newResidents / cap) * 100);
-    const chance       = fillRate >= 95 ? "danger" : fillRate >= 80 ? "caution" : fillRate >= 60 ? "normal" : "good";
+    const vacancy       = Math.max(0, cap - newResidents);
+    const fillRate       = Math.round((newResidents / cap) * 100);
+    const chance          = fillRate >= 95 ? "danger" : fillRate >= 80 ? "caution" : fillRate >= 60 ? "normal" : "good";
 
     rows.push({
-      year, cap, confirmed, residents: Math.round(residents),
+      year, half, label, key,
+      cap, confirmed, residents: Math.round(residents),
       vacancy, fillRate, chance,
       traineeConv, direct, ikuseiroConv, totalInflow,
       repatriate, kaishou, totalOutflow,
     });
 
-    residents   = newResidents;
-    directEntry *= (1 + p.directEntryGrowth / 100);
-  }
+    residents = newResidents;
+    if (half === 2) {
+      directEntryAnnual *= (1 + p.directEntryGrowth / 100);
+    }
+  });
+
   return rows;
 }
 
@@ -108,9 +127,11 @@ const CHANCE_META = {
 
 function TT({ active, payload, label }) {
   if (!active || !payload?.length) return null;
+  const parts = String(label).split("-");
+  const niceLabel = parts[1] === "2" ? `${parts[0]}年12月末` : `${parts[0]}年6月末`;
   return (
     <div style={{ background:"#0f172a", border:"1px solid #1e3a5f", borderRadius:8, padding:"10px 14px", fontSize:11, color:"#e2e8f0", minWidth:190 }}>
-      <div style={{ fontWeight:700, marginBottom:6, color:"#7dd3fc" }}>{label}年</div>
+      <div style={{ fontWeight:700, marginBottom:6, color:"#7dd3fc" }}>{niceLabel}</div>
       {payload.filter(p => p.value != null).map(p => (
         <div key={p.name} style={{ display:"flex", justifyContent:"space-between", gap:16, marginBottom:3 }}>
           <span style={{ color: p.stroke || p.color }}>{p.name}</span>
@@ -155,7 +176,9 @@ export default function App() {
   }), [p]);
 
   const chartData = useMemo(() => all.standard.map((d, i) => ({
+    key: d.key,
     year: d.year,
+    half: d.half,
     capConfirmed:   d.year <= CONFIRMED_CAP_UNTIL ? d.cap : undefined,
     capUnconfirmed: d.year >  CONFIRMED_CAP_UNTIL ? d.cap : undefined,
     逼迫_空き枠: all.hippaku[i].vacancy,
@@ -166,8 +189,10 @@ export default function App() {
   const currentVacancy  = Math.max(0, CONFIRMED_CAP - p.currentResidents);
   const currentFill     = Math.round((p.currentResidents / CONFIRMED_CAP) * 100);
   const currentChance   = CHANCE_META[all.standard[0]?.chance ?? "good"];
-  const chanceYears     = all.standard.filter(r => r.fillRate < 80).length;
-  const dangerYear      = all.standard.find(r => r.fillRate >= 90)?.year ?? "−";
+  const chanceHalfYears = all.standard.filter(r => r.fillRate < 80).length;
+  const chanceYearsDisplay = chanceHalfYears % 2 === 0 ? String(chanceHalfYears / 2) : (chanceHalfYears / 2).toFixed(1);
+  const dangerRow       = all.standard.find(r => r.fillRate >= 90);
+  const dangerLabel     = dangerRow ? dangerRow.label : "−";
 
   return (
     <div style={{
@@ -201,7 +226,7 @@ export default function App() {
             </div>
           </div>
         </div>
-        <div style={{ fontSize:10, color:"#475569", marginTop:6, marginLeft:46 }}>2025–2044　社内営業判断用</div>
+        <div style={{ fontSize:10, color:"#475569", marginTop:6, marginLeft:46 }}>2025–2040（半年ごと）　社内営業判断用</div>
       </div>
 
       {/* 警告バナー */}
@@ -273,8 +298,8 @@ export default function App() {
           </div>
           <div style={{ textAlign:"right" }}>
             <div style={{ fontSize:10, color:"#475569", marginBottom:2 }}>チャンス期間</div>
-            <div style={{ fontSize:28, fontWeight:800, color:"#60a5fa", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{chanceYears}<span style={{ fontSize:12 }}>年</span></div>
-            <div style={{ fontSize:10, color:"#475569", marginTop:4 }}>危険ライン {dangerYear}年</div>
+            <div style={{ fontSize:28, fontWeight:800, color:"#60a5fa", fontVariantNumeric:"tabular-nums", lineHeight:1 }}>{chanceYearsDisplay}<span style={{ fontSize:12 }}>年</span></div>
+            <div style={{ fontSize:10, color:"#475569", marginTop:4 }}>危険ライン {dangerLabel}</div>
           </div>
         </div>
         <div style={{ marginTop:12, background:"rgba(255,255,255,0.06)", borderRadius:6, height:8, overflow:"hidden" }}>
@@ -341,23 +366,27 @@ export default function App() {
               <span style={{ color:"rgba(251,191,36,0.5)", fontWeight:700 }}>╌ 上限（点線）</span>
               <span style={{ color:"#475569" }}>　2029年以降（仮定）</span>
             </div>
+            <div style={{ fontSize:9, color:"#334155", marginTop:4 }}>グラフ・下表は半年（6月末／12月末）ごとの試算です</div>
           </div>
 
           <ResponsiveContainer width="100%" height={260}>
             <ComposedChart data={chartData} margin={{ top:8, right:8, left:0, bottom:0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#0d2544" />
-              <XAxis dataKey="year" tick={{ fontSize:9, fill:"#334155" }} tickFormatter={v => `'${String(v).slice(2)}`} />
+              <XAxis dataKey="key" tick={{ fontSize:9, fill:"#334155" }} tickFormatter={v => {
+                const parts = String(v).split("-");
+                return parts[1] === "1" ? `'${parts[0].slice(2)}` : "";
+              }} />
               <YAxis tick={{ fontSize:9, fill:"#334155" }} tickFormatter={fmtK} width={38} />
               <Tooltip content={<TT />} />
               {REVIEW_YEARS.map(y => (
-                <ReferenceLine key={y} x={y} stroke="#1e3a5f" strokeDasharray="4 2"
+                <ReferenceLine key={y} x={`${y}-1`} stroke="#1e3a5f" strokeDasharray="4 2"
                   label={{ value:"見直し", position:"top", fontSize:8, fill:"#334155" }} />
               ))}
               {showExpert && (
-                <ReferenceLine x={2028} stroke="#f87171" strokeDasharray="3 3" strokeWidth={1.5}
+                <ReferenceLine x="2028-1" stroke="#f87171" strokeDasharray="3 3" strokeWidth={1.5}
                   label={{ value:"🚨停止見込", position:"insideTopRight", fontSize:9, fill:"#f87171" }} />
               )}
-              <ReferenceLine x={p.ikuseiroTransferStart} stroke="rgba(251,191,36,0.3)" strokeDasharray="3 3"
+              <ReferenceLine x={`${p.ikuseiroTransferStart}-1`} stroke="rgba(251,191,36,0.3)" strokeDasharray="3 3"
                 label={{ value:"育成就労↑", position:"insideTopLeft", fontSize:8, fill:"#92400e" }} />
               <Line dataKey="capConfirmed"   name="上限（確定）" stroke="#fbbf24" strokeWidth={2}   dot={false} connectNulls={false} />
               <Line dataKey="capUnconfirmed" name="上限（仮定）" stroke="#fbbf24" strokeWidth={1.5} dot={false} strokeDasharray="6 4" connectNulls={false} opacity={0.5} />
@@ -385,14 +414,14 @@ export default function App() {
                   介護上限は現在126,900人（確定）。2029年以降は政府未発表。
                   据え置き・引き上げ両方のシナリオで試算できます。
                 </div>
-                {[["cap2029","2029〜2033年"],["cap2034","2034〜2038年"],["cap2039","2039〜2043年"],["cap2044","2044年〜"]].map(([key,label]) => (
+                {[["cap2029","2029〜2033年"],["cap2034","2034〜2038年"],["cap2039","2039年〜2040年"]].map(([key,label]) => (
                   <SliderRow key={key} label={label} value={p[key]}
                     min={80000} max={300000} step={5000} unit="人"
                     highlight={p[key] !== 126900}
                     hint={p[key] === 126900 ? "据え置き（確定値と同じ）" : `${p[key].toLocaleString()}人に設定`}
                     onChange={set(key)} />
                 ))}
-                <button onClick={() => setP(prev => ({ ...prev, cap2029:126900, cap2034:126900, cap2039:126900, cap2044:126900 }))}
+                <button onClick={() => setP(prev => ({ ...prev, cap2029:126900, cap2034:126900, cap2039:126900 }))}
                   style={{ padding:"6px 14px", background:"transparent", border:"1px solid rgba(251,191,36,0.3)", borderRadius:6, color:"#fbbf24", cursor:"pointer", fontSize:11 }}>
                   すべて据え置きに戻す
                 </button>
@@ -427,7 +456,7 @@ export default function App() {
           </div>
 
           <div style={{ fontSize:10, color:"#475569", marginBottom:8 }}>
-            シミュレーション結果（標準シナリオ）　充填率:
+            シミュレーション結果（標準シナリオ・半年ごと）　充填率:
             <span style={{ color:"#4ade80" }}> ◎60%未満</span>
             <span style={{ color:"#60a5fa" }}> ○60〜80%</span>
             <span style={{ color:"#fbbf24" }}> △80〜95%</span>
@@ -437,7 +466,7 @@ export default function App() {
             <table style={{ width:"100%", borderCollapse:"collapse", fontSize:10 }}>
               <thead>
                 <tr style={{ background:"rgba(255,255,255,0.03)" }}>
-                  {["年","上限","空き枠","充填率","⚠逼迫","●標準","✓余裕"].map(h => (
+                  {["時点","上限","空き枠","充填率","⚠逼迫","●標準","✓余裕"].map(h => (
                     <th key={h} style={{ padding:"8px 5px", textAlign:"right", color:"#475569", borderBottom:"1px solid #1e3a5f", whiteSpace:"nowrap", fontWeight:600, fontSize:9 }}>{h}</th>
                   ))}
                 </tr>
@@ -450,12 +479,12 @@ export default function App() {
                   const isDanger2028 = row.year === 2028;
                   const cm = CHANCE_META[row.chance];
                   return (
-                    <tr key={row.year} style={{
+                    <tr key={row.key} style={{
                       background: isDanger2028 ? "rgba(239,68,68,0.08)" : isReview ? "rgba(251,191,36,0.04)" : "transparent",
                       borderLeft: isDanger2028 ? "2px solid #f87171" : isReview ? "2px solid #fbbf24" : "2px solid transparent"
                     }}>
                       <td style={{ padding:"7px 5px", color: isDanger2028 ? "#f87171" : isReview ? "#fbbf24" : "#64748b", fontWeight: (isDanger2028||isReview) ? 700 : 400, fontVariantNumeric:"tabular-nums", whiteSpace:"nowrap" }}>
-                        {row.year}{isDanger2028 ? " 🚨" : isReview ? " ★" : ""}
+                        {row.label}{isDanger2028 ? " 🚨" : isReview ? " ★" : ""}
                       </td>
                       <td style={{ padding:"7px 5px", textAlign:"right", color: row.year <= CONFIRMED_CAP_UNTIL ? "#fbbf24" : "rgba(251,191,36,0.4)", fontSize:9, fontVariantNumeric:"tabular-nums" }}>
                         {fmtK(row.cap)}{row.year > CONFIRMED_CAP_UNTIL ? "仮" : ""}
@@ -552,7 +581,7 @@ export default function App() {
         {openSection === "flow" && (
           <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid #1e3a5f", borderTop:"none", borderRadius:"0 0 9px 9px", padding:"16px" }}>
             <div style={{ fontSize:10, color:"#334155", marginBottom:14, lineHeight:1.7 }}>
-              在留者数・上限は実績値固定。流入・流出の仮定値を調整できます。
+              在留者数・上限は実績値固定。流入・流出の仮定値を調整できます。（年間ベースの数値を半年ごとに按分して計算します）
             </div>
             <SliderRow label="技能実習介護 在留者総数" value={p.traineeKaigoResidents}
               min={5000} max={40000} step={100} unit="人"
@@ -595,6 +624,7 @@ export default function App() {
           <div>・受入れ見込数の充足率：58.9%（同資料）</div>
           <div>・上限126,900人：介護分野別運用方針（全体805,700人とは別、令和8年1月閣議決定）</div>
           <div>・専門家推計：Global HR Strategy 2026年上半期資料</div>
+          <div>・シミュレーションは2025〜2040年を半年（6月末／12月末）単位で試算。年間ベースの仮定値は単純に2分割</div>
           <div>・2029年以降の上限・シナリオラインは仮定値（点線）</div>
           <div style={{ color:"#f87171", marginTop:4 }}>・本ツールは社内営業判断用。外部開示・行政提出には使用不可</div>
         </div>

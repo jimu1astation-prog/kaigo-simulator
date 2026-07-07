@@ -33,6 +33,16 @@ const EXPERT_FORECAST = [
   { period: "2028年3月",    vacancy: 0,     residents: 126900, danger: true },
 ];
 
+// 専門家推計のうち、半年グリッド（6月末/12月末）にちょうど乗る時点だけを抜き出し、
+// グラフ上に参考ラインとして描画するためのマップ（2026年3月末・2028年3月はグリッドに乗らないため対象外）。
+const EXPERT_VACANCY_BY_KEY = {
+  "2025-2": 59029,
+  "2026-1": 46074,
+  "2026-2": 33119,
+  "2027-1": 20164,
+  "2027-2": 7209,
+};
+
 // 2025年12月末は出入国在留管理庁の実測値をそのまま採用する（3シナリオ共通・固定値）。
 // 2026年3月末の実測値74,745人（=DEFAULTS.currentResidents）は半年グリッドに乗らないため、
 // 2025年12月末の処理直後にこの値へスナップし、2026年6月末以降は自社の流入出モデルで独自に試算する。
@@ -212,6 +222,7 @@ export default function App() {
     逼迫_空き枠: all.hippaku[i].vacancy,
     標準_空き枠: all.standard[i].vacancy,
     余裕_空き枠: all.yoyu[i].vacancy,
+    専門家推計_空き枠: EXPERT_VACANCY_BY_KEY[d.key],
   })), [all]);
 
   const currentVacancy  = Math.max(0, CONFIRMED_CAP - p.currentResidents);
@@ -394,8 +405,11 @@ export default function App() {
               {"　"}
               <span style={{ color:"rgba(251,191,36,0.5)", fontWeight:700 }}>╌ 上限（点線）</span>
               <span style={{ color:"#475569" }}>　2029年以降（仮定）</span>
+              {"　"}
+              <span style={{ color:"#fb923c", fontWeight:700 }}>•• 専門家推計</span>
+              <span style={{ color:"#475569" }}>　2025年12月〜2027年12月末（点のみ）</span>
             </div>
-            <div style={{ fontSize:9, color:"#334155", marginTop:4 }}>2025年12月末は実測値。2026年6月末以降は自社モデルによる独自試算です（専門家推計は参考ラインとして表示）</div>
+            <div style={{ fontSize:9, color:"#334155", marginTop:4 }}>2025年12月末は実測値。2026年6月末以降は自社モデルによる独自試算です（オレンジの点＝専門家推計、2028年3月の停止見込みは点線で表示）</div>
           </div>
 
           <ResponsiveContainer width="100%" height={260}>
@@ -422,6 +436,10 @@ export default function App() {
               {activeS.includes("hippaku")  && <Line dataKey="逼迫_空き枠" name="⚠ 逼迫" stroke="#f87171" strokeWidth={1.5} dot={false} strokeDasharray="4 2" />}
               {activeS.includes("standard") && <Line dataKey="標準_空き枠" name="● 標準" stroke="#60a5fa" strokeWidth={2.5} dot={false} />}
               {activeS.includes("yoyu")     && <Line dataKey="余裕_空き枠" name="✓ 余裕" stroke="#4ade80" strokeWidth={1.5} dot={false} />}
+              {showExpert && (
+                <Line dataKey="専門家推計_空き枠" name="🚨 専門家推計" stroke="#fb923c" strokeWidth={2}
+                  strokeDasharray="1 4" dot={{ r: 3, fill: "#fb923c", strokeWidth: 0 }} connectNulls={false} />
+              )}
             </ComposedChart>
           </ResponsiveContainer>
 
